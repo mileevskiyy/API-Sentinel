@@ -1,5 +1,9 @@
 # API Sentinel
 
+[![Live demo](https://img.shields.io/badge/Live_demo-Try_API_Sentinel-111111?style=for-the-badge)](https://api-sentinel-demo.onrender.com/)
+
+**[Open the live demo](https://api-sentinel-demo.onrender.com/)** · Select **Try the demo**. No account or password needed. The free server may take about a minute to wake. Visitors share synthetic data that resets on restart.
+
 **An API reliability workspace that connects response contracts, check evidence and incident decisions.**
 
 API Sentinel is built with **Node.js 24, TypeScript, Express, SQLite, React and Vite**. It checks HTTP status, response latency and explicit JSON assertions, records response-shape changes, and follows an incident from consecutive failures through acknowledgement to confirmed recovery.
