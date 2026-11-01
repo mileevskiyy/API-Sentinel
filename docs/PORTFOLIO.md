@@ -6,7 +6,7 @@
 
 - Built configurable API checks for HTTP status, latency and JSON assertions, with preserved response evidence and response-shape baseline comparisons.
 - Implemented threshold-driven incidents, acknowledgement and confirmed recovery; protected current state from obsolete in-flight results using configuration versions and control epochs.
-- Added replay-safe execution, transactional incident updates, a bounded HTTPS probe transport and an optional scheduler; verified rollback, concurrent request reuse and the complete browser workflow.
+- Added replay-safe execution, transactional incident updates, a bounded HTTPS probe transport and a durable SQLite job queue with fenced leases, crash recovery and persisted interval cursors; verified rollback, concurrent request reuse and the complete browser workflow.
 
 ## LinkedIn description
 

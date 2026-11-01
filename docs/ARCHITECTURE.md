@@ -74,7 +74,7 @@ The response preview stores up to 4 KB of JSON text. It may contain endpoint dat
 
 ## Scheduler and shutdown
 
-The optional scheduler checks eligibility every five seconds and dispatches sequentially through `Store.run`. Re-entrant ticks share the running tick. Stable revision/interval keys prevent duplicate dispatch in a polling window. On shutdown, the timer stops, an active tick drains, HTTP requests finish and SQLite closes. The scheduler is disabled and refused in public-demo mode.
+The worker polls durable jobs every second; optional private interval scheduling also advances persisted cursors. Re-entrant ticks share the running tick. On shutdown the timer stops, active work drains, HTTP requests finish and SQLite closes. Public mode permits explicit fixture jobs but refuses recurring interval scheduling. See the durable execution protocol below.
 
 ## Durable execution protocol
 

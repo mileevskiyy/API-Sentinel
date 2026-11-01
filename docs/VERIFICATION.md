@@ -22,3 +22,5 @@ These checks verify the documented bounded operating model. They are not a load 
 - Mobile execution history screenshot inspected; no document-level horizontal overflow.
 
 These tests demonstrate bounded local SQLite coordination. They do not establish multi-host distribution, exactly-once HTTP delivery, external notifications or production availability.
+
+Published application commit: `d521eddd86b037396dfab5f1c4c1907874a746ba`. GitHub Actions passed: https://github.com/mileevskiyy/API-Sentinel/actions/runs/41289129071 . Render deployment `dep-dbjfh5bm8hqs73fno0dg` reached live. Both Chromium scenarios passed against https://api-sentinel-demo.onrender.com on 1 November 2026 (26.9 seconds).

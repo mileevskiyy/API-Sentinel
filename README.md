@@ -23,7 +23,7 @@ The central design question is whether an observation should change the monitor'
 - **Maintenance and pause:** suppress incident transitions during maintenance; pause blocks new checks and invalidates work that crossed the pause boundary.
 - **Configuration revisions:** optimistic edit checks, preserved historical rules and explicit supersession of outdated in-flight results and incidents.
 - **Real HTTPS probes in private mode:** public-address DNS validation, pinned connection lookup, TLS verification, bounded response bodies, fixed request deadlines and no redirect following.
-- **Optional periodic execution:** a single-process scheduler respects per-monitor intervals, pause state and the same execution gate used by manual checks.
+- **Recoverable execution:** SQLite jobs, fenced worker leases and durable interval cursors preserve work across private-workspace restarts; the UI exposes attempt history and saved results.
 - **Investigation interface:** retained check history, latency traces, pass-rate summaries, incidents, activity and downloadable JSON evidence.
 - **Disposable public demo:** built-in endpoints with healthy, HTTP 503, slow and response-drift scenarios, without needing a password or external database.
 
@@ -58,7 +58,7 @@ Open **http://127.0.0.1:3400** and select **Try the demo**. Initial data is expl
 | Probe transport | Node HTTPS, DNS, AbortSignal, ipaddr.js | Address validation, connection pinning, TLS and resource limits |
 | Evaluation | TypeScript, JSON Pointer traversal | Status, latency, required paths, types, values and bounded response shapes |
 | State and evidence | SQLite, parameterized SQL | Configuration revisions, observations, request identities, incidents and events |
-| Scheduling | In-process TypeScript scheduler | Interval checks, deduplication, pause handling and orderly shutdown |
+| Scheduling | SQLite jobs and TypeScript workers | Fenced claims, bounded retries, interval cursors and crash recovery |
 | Verification | Node test runner, Playwright | State invariants, failure rollback, HTTP behavior and browser workflow |
 | Delivery | Docker, GitHub Actions | Reproducible build, automated checks and single-service hosting |
 
