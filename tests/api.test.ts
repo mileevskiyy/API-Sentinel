@@ -13,3 +13,19 @@ test('private mode has no demo entry and rotates authenticated sessions',async()
  try{assert.equal((await fetch(base+'/demo-login',{method:'POST'})).status,404);const login=()=>fetch(base+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:'Synthetic-operator-password'})});const first=await login(),cookie=first.headers.get('set-cookie')!.split(';')[0];assert.equal(first.status,200);const second=await fetch(base+'/login',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({password:'Synthetic-operator-password'})});assert.equal(second.status,200);assert.notEqual(second.headers.get('set-cookie')!.split(';')[0],cookie);assert.equal((await fetch(base+'/workspace',{headers:{Cookie:cookie}})).status,401);
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));s.close();if(previous===undefined)delete process.env.OPERATOR_PASSWORD;else process.env.OPERATOR_PASSWORD=previous;}
 });
+
+test('job API protects commands, hides leases, drains queued work and retries exhausted jobs',async()=>{
+ let time=Date.parse('2026-11-01T00:00:00Z');const s=new Store(':memory:',true,()=>new Date(time).toISOString()),server=createApp(s).listen(0,'127.0.0.1');await once(server,'listening');const base=`http://127.0.0.1:${(server.address() as any).port}/api`;let cookie='',csrf='';
+ const req=(path:string,method='GET',body?:unknown,headers:Record<string,string>={})=>fetch(base+path,{method,headers:{'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{}),...(csrf?{'X-CSRF-Token':csrf}:{}),...headers},body:body?JSON.stringify(body):undefined});
+ try{
+  assert.equal((await req('/jobs')).status,401);const login=await req('/demo-login','POST');cookie=login.headers.get('set-cookie')!.split(';')[0];csrf=(await(await req('/session')).json()).csrf;
+  const m=s.create({name:'HTTP queued fixture',target:'fixture:catalog'});
+  assert.equal((await req(`/monitors/${m.id}/jobs`,'POST',{key:'http-queued-request'},{'X-CSRF-Token':''})).status,403);
+  const job=await(await req(`/monitors/${m.id}/jobs`,'POST',{key:'http-queued-request'})).json();assert.equal(job.status,'queued');assert.equal((await(await req(`/monitors/${m.id}/jobs`,'POST',{key:'http-queued-request'})).json()).id,job.id);
+  assert.equal((await req(`/jobs/${job.id}/cancel`,'POST')).status,200);assert.equal(s.jobs.job(job.id).status,'cancelled');assert.equal(s.checks(m.id).length,0);
+  const retry=s.jobs.enqueue(m.id,'http-exhausted-key');for(let i=0;i<3;i++){s.jobs.claim(retry.id);time+=15001;}s.jobs.claim(retry.id);assert.equal(s.jobs.job(retry.id).status,'failed');
+  const result=await req(`/jobs/${retry.id}/retry`,'POST',{key:'http-explicit-retry'});assert.equal(result.status,201);assert.equal((await result.json()).status,'passed');
+  const jobs=await(await req(`/jobs?monitor_id=${m.id}`)).json();assert.equal(jobs[0].origin,'retry');assert.equal(jobs[0].retry_of,retry.id);assert.equal(jobs[0].checkStatus,'passed');assert.equal(jobs[0].lease_token,undefined);assert.ok(jobs.every((j:any)=>j.attempts.every((a:any)=>a.token===undefined)));
+  assert.equal((await req('/jobs/missing')).status,404);assert.equal((await req('/jobs?monitor_id=invalid')).status,400);
+ }finally{await new Promise<void>(r=>server.close(()=>r()));s.close();}
+});

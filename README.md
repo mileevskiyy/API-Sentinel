@@ -119,11 +119,19 @@ npm start
 
 The private workspace uses a single operator password and persistent local SQLite. Create an HTTPS monitor for a JSON endpoint you are authorized to monitor. Set its interval between 60 and 3,600 seconds.
 
-The scheduler scans every five seconds, skips paused monitors, avoids an observation when a current-revision check is still fresh, and uses a stable interval/revision key when dispatching. Checks run only while this process is alive. It does not provide durable jobs, missed-interval backfill or monitoring while a free hosting service is asleep.
+The worker scans every second. Manual checks and explicit **Queue check** actions use SQLite jobs with recorded attempts, 15-second leases and at most three attempts. Infrastructure failures retry after one and two seconds. A failed HTTP assertion is a completed job with a failed check, not a worker failure.
+
+With `RUN_SCHEDULER=true`, durable interval cursors enqueue one current check after downtime and record the number of missed slots; they do not fabricate historical observations. Configuration revisions and pause epochs cancel stale queued work. Evidence, incident transitions and job completion commit in one fenced transaction: an expired worker cannot commit a second result. An interrupted HTTP GET can be repeated during recovery; this is not exactly-once network delivery.
 
 Set `SEED_DEMO=false` for an empty workspace. `COOKIE_SECURE=true` enables secure cookies behind HTTPS. `APP_ORIGIN` can declare the frontend origin; Render's service URL is recognized through `RENDER_EXTERNAL_URL`. `npm start` loads a local `.env` file when present.
 
-Use exactly one application process for a workspace. Sessions, the scheduler and the in-flight execution gate are process-local.
+Use one application process for the authenticated workspace because sessions remain process-local. Lease coordination is tested across handles sharing one local SQLite file, not across hosts. Restart recovery requires a persistent `DATABASE_PATH`; free disposable demos use memory and reset on restart. Their manual fixture queue works, but recurring interval scheduling remains disabled. `RUN_SCHEDULER=false` disables intervals, not manual queue processing.
+
+### Inspect queued work
+
+Open a monitor and choose **Queue check → Jobs**, or use **Execution jobs** in navigation. Inspect each attempt and its saved check, filter by state, export history, cancel queued work, or retry a terminal infrastructure failure as a new linked job. Running work cannot be cancelled. Retained job history labels checks whose full evidence has expired.
+
+The queue admits at most four unexpired worker leases, keeps the latest 200 terminal jobs per monitor and returns the latest 100 matching jobs. Attempts are capped at three. It does not send notifications.
 
 ## Metrics and retention
 

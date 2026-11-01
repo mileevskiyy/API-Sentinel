@@ -2,11 +2,11 @@
 
 ## Implemented
 
-HTTP/latency/JSON assertions; bounded response-shape comparison; immutable evidence; configurable incident/recovery streaks; acknowledgement; pause/maintenance; configuration revisions and control epochs; replay-safe check execution; private HTTPS transport; optional single-process scheduler; history/export UI; disposable fixture-only public demo.
+HTTP/latency/JSON assertions; bounded response-shape comparison; immutable evidence; configurable incident/recovery streaks; acknowledgement; pause/maintenance; configuration revisions and control epochs; replay-safe check execution; private HTTPS transport; durable SQLite execution jobs, recorded attempts, fenced leases, crash recovery and interval cursors; history/export UI; disposable fixture-only public demo.
 
-## Next: durable scheduling
+## Completed: durable scheduling
 
-Persist due-job claims and execution attempts; introduce worker leases and crash recovery. Acceptance: a worker interrupted after probing can resume without duplicate incidents or lost result evidence. The current in-process timer does not claim this behavior.
+SQLite jobs, 15-second worker leases, three-attempt recovery, atomic evidence/incident/job commits and persistent interval cursors are implemented. A real child-process crash and stale-worker fencing are covered by automated tests. Missed intervals coalesce into one present observation. HTTP GET may repeat after interruption; multi-host scheduling and external notification delivery remain outside this milestone.
 
 ## Next: notification delivery
 

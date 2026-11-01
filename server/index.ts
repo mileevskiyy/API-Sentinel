@@ -1,6 +1,6 @@
 import express from'express';import{mkdirSync,existsSync}from'node:fs';import{dirname,resolve}from'node:path';import{Store}from'./store.ts';import{createApp}from'./app.ts';import{Scheduler}from'./scheduler.ts';
 const demo=process.env.PUBLIC_DEMO!=='false';const path=process.env.DATABASE_PATH||(demo?':memory:':'data/sentinel.sqlite');if(path!==':memory:')mkdirSync(dirname(resolve(path)),{recursive:true});
-const store=new Store(path,demo);if(process.env.SEED_DEMO!=='false')store.seed();const schedulerEnabled=process.env.RUN_SCHEDULER==='true';const scheduler=schedulerEnabled?new Scheduler(store):null;const app=createApp(store,{schedulerEnabled});scheduler?.start();
+const store=new Store(path,demo);if(process.env.SEED_DEMO!=='false')store.seed();const schedulerEnabled=process.env.RUN_SCHEDULER==='true';const scheduler=new Scheduler(store,Date.now,schedulerEnabled);const app=createApp(store,{schedulerEnabled});scheduler?.start();
 if(existsSync('dist')){app.use(express.static(resolve('dist')));app.get('/',(_req,res)=>res.sendFile(resolve('dist/index.html')));}
 const port=Number(process.env.PORT||3400),host=process.env.HOST||'127.0.0.1';const server=app.listen(port,host,()=>console.log(`API Sentinel: http://${host}:${port} · ${demo?'disposable demo':'private workspace'}`));
 let stopping=false;for(const signal of['SIGTERM','SIGINT'])process.on(signal,()=>{if(stopping)return;stopping=true;const stopped=scheduler?.stop();server.close(async()=>{await stopped;store.close();process.exit(0);});server.closeIdleConnections();});

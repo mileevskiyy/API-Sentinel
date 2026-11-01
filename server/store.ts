@@ -1,3 +1,4 @@
+import{JobQueue,type Claim}from'./jobs.ts';
 import{DatabaseSync}from'node:sqlite';
 import{randomUUID}from'node:crypto';
 import{monitorSchema,Problem,type MonitorConfig,type Monitor,type CheckRow,type Observation}from'./contracts.ts';
@@ -6,7 +7,7 @@ import{targetURL,fixtureObservation,externalProbe}from'./probe.ts';
 const uid=()=>randomUUID();
 export type Incident={id:string;monitorId:string;status:'open'|'acknowledged'|'resolved';title:string;openedAt:string;acknowledgedAt:string|null;resolvedAt:string|null;openedCheckId:string;resolvedCheckId:string|null;note:string};
 export class Store{
- readonly db:DatabaseSync;private inflight=new Map<string,{key:string;promise:Promise<CheckRow>}>();private active=0;
+ readonly jobs:JobQueue;readonly db:DatabaseSync;private inflight=new Map<string,{key:string;promise:Promise<CheckRow>}>();private active=0;
  constructor(path=':memory:',readonly publicDemo=true,private clock=()=>new Date().toISOString()){
   if(publicDemo&&path!==':memory:')throw new Error('Public demo must use an isolated in-memory database.');
   this.db=new DatabaseSync(path);this.db.exec(`PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000;
@@ -18,6 +19,7 @@ export class Store{
   CREATE INDEX IF NOT EXISTS checks_monitor_time ON checks(monitor_id,created_at);
   CREATE INDEX IF NOT EXISTS incidents_monitor ON incidents(monitor_id);
   PRAGMA user_version=1;`);
+  this.jobs=new JobQueue(this.db,this.clock,id=>this.monitor(id));
  }
  close(){this.db.close();}
  private transaction<T>(fn:()=>T):T{this.db.exec('BEGIN IMMEDIATE');try{const result=fn();this.db.exec('COMMIT');return result;}catch(e){this.db.exec('ROLLBACK');throw e;}}
@@ -53,19 +55,22 @@ export class Store{
  private saveIncident(i:Incident){this.db.prepare('INSERT INTO incidents VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload').run(i.id,i.monitorId,JSON.stringify(i),i.openedAt);}
  acknowledge(id:string,note:string){return this.transaction(()=>{const i=this.incidents().find(i=>i.id===id);if(!i)throw new Problem(404,'Incident not found.');if(i.status==='resolved')throw new Problem(409,'This incident is already resolved.');if(i.status==='acknowledged')return i;i.status='acknowledged';i.acknowledgedAt=this.clock();i.note=note;this.saveIncident(i);this.event(i.monitorId,'incident.acknowledged',note||'Acknowledged by operator',i.id);return i;});}
  approveBaseline(mid:string,checkId:string){return this.transaction(()=>{const m=this.monitor(mid),c=this.check(checkId);if(c.monitorId!==mid||c.version!==m.version||c.status!=='passed')throw new Problem(409,'Choose a passing check from the current monitor revision.');m.baseline=c.shape;this.writeMonitor(m);this.event(mid,'baseline.accepted',`Response shape accepted from check ${c.id}`);return this.monitor(mid);});}
- async run(mid:string,key:string,probe?:(m:Monitor)=>Promise<Observation>):Promise<CheckRow>{
+ async run(mid:string,key:string,probe?:(m:Monitor)=>Promise<Observation>,jobId?:string):Promise<CheckRow>{
   if(!/^[A-Za-z0-9_.:-]{8,100}$/.test(key))throw new Problem(400,'Provide an 8–100 character request key.');
   const old=this.db.prepare('SELECT payload FROM checks WHERE monitor_id=? AND request_key=?').get(mid,key) as any;if(old)return JSON.parse(old.payload);
   if(this.db.prepare('SELECT check_id FROM request_keys WHERE monitor_id=? AND request_key=?').get(mid,key))throw new Problem(410,'The original check has left retained history; use a new request key for a new observation.');
   if((this.db.prepare('SELECT count(*) AS n FROM request_keys WHERE monitor_id=?').get(mid) as any).n>=10000)throw new Problem(429,'This monitor has reached its 10,000-check limit.');
   const existing=this.inflight.get(mid);if(existing){if(existing.key===key)return existing.promise;throw new Problem(409,'This monitor already has a check in progress.');}
-  const m=this.monitor(mid);if(m.paused)throw new Problem(409,'Resume this monitor before running a check.');if(this.active>=4)throw new Problem(429,'Four checks are already running. Try again shortly.');
+  const current=this.monitor(mid);if(current.paused&&!jobId)throw new Problem(409,'Resume this monitor before running a check.');if(this.active>=4)throw new Problem(429,'Four checks are already running. Try again shortly.');
+  const job=jobId?this.jobs.job(jobId):this.jobs.enqueue(mid,key),claim=this.jobs.claim(job.id);
+  if(!claim)throw new Problem(409,'Job is waiting for its retry window, another worker, or no longer eligible.');
+  const m={...claim.snapshot,scenario:this.monitor(mid).scenario};
   this.active++;
-  const promise=Promise.resolve().then(async()=>{let observation:Observation;try{observation=await(probe?probe(m):m.config.target.startsWith('fixture:')?Promise.resolve(fixtureObservation(m.config.target,m.scenario,this.checks(mid,200).length)):externalProbe(m.config.target));}catch(e){observation={status:0,latencyMs:0,body:null,error:(e as Error).message.slice(0,240),synthetic:m.config.target.startsWith('fixture:')};}return this.record(m,key,observation);}).finally(()=>{this.active--;this.inflight.delete(mid);});
+  const promise=Promise.resolve().then(async()=>{let observation:Observation;try{observation=await(probe?probe(m):m.config.target.startsWith('fixture:')?Promise.resolve(fixtureObservation(m.config.target,m.scenario,this.checks(mid,200).length)):externalProbe(m.config.target));}catch(e){observation={status:0,latencyMs:0,body:null,error:(e as Error).message.slice(0,240),synthetic:m.config.target.startsWith('fixture:')};}try{return this.record(m,key,observation,undefined,claim);}catch(e){this.jobs.fail(claim,e);throw e;}}).finally(()=>{this.active--;if(this.inflight.get(mid)?.promise===promise)this.inflight.delete(mid);});
   this.inflight.set(mid,{key,promise});return promise;
  }
- record(snapshot:Monitor,key:string,observation:Observation,at?:string):CheckRow{
-  return this.transaction(()=>{const existing=this.db.prepare('SELECT payload FROM checks WHERE monitor_id=? AND request_key=?').get(snapshot.id,key) as any;if(existing)return JSON.parse(existing.payload);
+ record(snapshot:Monitor,key:string,observation:Observation,at?:string,claim?:Claim):CheckRow{
+  return this.transaction(()=>{if(claim)this.jobs.fence(claim);const existing=this.db.prepare('SELECT payload FROM checks WHERE monitor_id=? AND request_key=?').get(snapshot.id,key) as any;if(existing)return JSON.parse(existing.payload);
    const current=this.monitor(snapshot.id),evaluation=evaluate(snapshot.config,observation,snapshot.baseline),superseded=current.version!==snapshot.version||current.epoch!==snapshot.epoch||current.paused||current.maintenance!==snapshot.maintenance;
    const status=superseded?'superseded':snapshot.maintenance?'suppressed':evaluation.passed?'passed':'failed';
    const row:CheckRow={id:uid(),monitorId:snapshot.id,key,version:snapshot.version,config:snapshot.config,status,httpStatus:observation.status,latencyMs:observation.latencyMs,assertions:evaluation.assertions,shape:evaluation.shape,drift:evaluation.drift,preview:JSON.stringify(observation.body)?.slice(0,4096)||'null',error:observation.error||null,synthetic:observation.synthetic,createdAt:at||this.clock()};
@@ -82,10 +87,12 @@ export class Store{
    const closed=this.incidents().filter(i=>i.status==='resolved');for(const old of closed.slice(100))this.db.prepare('DELETE FROM incidents WHERE id=?').run(old.id);
    const incidentRows=this.incidents(),keep=new Set(incidentRows.flatMap(i=>[i.openedCheckId,i.resolvedCheckId].filter(Boolean)));
    for(const old of(this.db.prepare('SELECT id FROM checks WHERE monitor_id=? ORDER BY created_at DESC,rowid DESC LIMIT -1 OFFSET 200').all(current.id) as any[]))if(!keep.has(old.id))this.db.prepare('DELETE FROM checks WHERE id=?').run(old.id);
+   if(claim)this.jobs.finish(claim,row.id);
    return row;
   });
  }
- detail(mid:string){const m=this.monitor(mid);return{monitor:m,checks:this.checks(mid,200),incidents:this.incidents().filter(i=>i.monitorId===mid),events:this.db.prepare('SELECT * FROM events WHERE monitor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100').all(mid)};}
+ async executeJob(id:string,probe?:(m:Monitor)=>Promise<Observation>){const job=this.jobs.job(id);return this.run(job.monitor_id,job.request_key,probe,id);}
+ detail(mid:string){const m=this.monitor(mid);return{jobs:this.jobs.list(mid),monitor:m,checks:this.checks(mid,200),incidents:this.incidents().filter(i=>i.monitorId===mid),events:this.db.prepare('SELECT * FROM events WHERE monitor_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100').all(mid)};}
  overview(){const monitors=(this.db.prepare('SELECT id FROM monitors ORDER BY created_at,rowid').all() as any[]).map(r=>{const m=this.monitor(r.id),checks=this.checks(m.id,200),eligible=checks.filter(c=>['passed','failed'].includes(c.status)&&c.version===m.version),latencies=eligible.map(c=>c.latencyMs).sort((a,b)=>a-b),last=eligible[0],incident=this.openIncident(m.id);return{...m,status:m.paused?'paused':m.maintenance?'maintenance':incident?'incident':last?.status==='failed'?'degraded':last?'healthy':'pending',latest:checks[0]||null,history:checks.slice(0,40).reverse().map(c=>({status:c.status,latencyMs:c.latencyMs,at:c.createdAt})),stats:{checks:eligible.length,passed:eligible.filter(c=>c.status==='passed').length,passRate:eligible.length?Math.round(eligible.filter(c=>c.status==='passed').length/eligible.length*10000)/100:null,p95:latencies.length?latencies[Math.ceil(latencies.length*.95)-1]:null},incidentId:incident?.id||null};});return{monitors,incidents:this.incidents(),events:this.db.prepare('SELECT * FROM events ORDER BY created_at DESC,rowid DESC LIMIT 50').all(),publicDemo:this.publicDemo};}
  seed(){
   if((this.db.prepare('SELECT count(*) AS n FROM monitors').get() as any).n)return;

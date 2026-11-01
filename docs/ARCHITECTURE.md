@@ -75,3 +75,13 @@ The response preview stores up to 4 KB of JSON text. It may contain endpoint dat
 ## Scheduler and shutdown
 
 The optional scheduler checks eligibility every five seconds and dispatches sequentially through `Store.run`. Re-entrant ticks share the running tick. Stable revision/interval keys prevent duplicate dispatch in a polling window. On shutdown, the timer stops, an active tick drains, HTTP requests finish and SQLite closes. The scheduler is disabled and refused in public-demo mode.
+
+## Durable execution protocol
+
+`execution_jobs` captures monitor revision, control epoch, request identity and source; `execution_attempts` records each claim. A partial unique index permits one queued/running job per monitor. Claims use an immediate SQLite transaction and admit four unexpired leases across connections. Lease tokens stay server-side. Expired claims mark the previous attempt abandoned before another attempt begins.
+
+Result recording fences the token inside the transaction that writes checks, request identities, incidents, streaks, audit events and job completion. Storage failure rolls back that transaction and schedules a bounded retry. An HTTP error is evidence, not an infrastructure retry. A queued snapshot invalidated by pause/configuration changes is cancelled without probing.
+
+`schedule_cursors` advances atomically with scheduled job creation. Downtime coalesces missed slots; no result is assigned a fictional historical timestamp. Persistent private SQLite provides restart recovery. The shared public in-memory fixture demo only demonstrates queue execution within its current lifetime.
+
+API additions: `GET /api/jobs?monitor_id=<uuid>`, `GET /api/jobs/:id`, `POST /api/monitors/:id/jobs` with `{key}`, `POST /api/jobs/:id/cancel`, and `POST /api/jobs/:id/retry` with a fresh `{key}`. Retry links a new execution to its failed predecessor. Existing authentication, Origin and CSRF checks protect mutations. Raw lease tokens and snapshots are excluded from job responses.

@@ -19,6 +19,11 @@ export function createApp(store:Store,options:{schedulerEnabled?:boolean}={}){
  app.put('/api/monitors/:id',(req,res)=>{const b=z.object({version:z.number().int().positive(),config:z.unknown()}).parse(req.body);res.json(store.update(req.params.id,b.version,b.config));});
  app.patch('/api/monitors/:id/control',(req,res)=>res.json(store.control(req.params.id,z.object({paused:z.boolean().optional(),maintenance:z.boolean().optional(),scenario:z.enum(['healthy','outage','slow','drift']).optional()}).strict().parse(req.body))));
  app.post('/api/monitors/:id/checks',async(req,res)=>{const b=z.object({key:z.string().max(100)}).parse(req.body);res.status(201).json(await store.run(req.params.id,b.key));});
+ app.get('/api/jobs',(req,res)=>{const q=z.object({monitor_id:z.string().uuid().optional()}).parse(req.query);if(q.monitor_id)store.monitor(q.monitor_id);res.json(store.jobs.list(q.monitor_id));});
+ app.get('/api/jobs/:id',(req,res)=>res.json(store.jobs.job(req.params.id)));
+ app.post('/api/monitors/:id/jobs',(req,res)=>{const b=z.object({key:z.string().max(100)}).strict().parse(req.body);res.status(201).json(store.jobs.enqueue(req.params.id,b.key));});
+ app.post('/api/jobs/:id/cancel',(req,res)=>res.json(store.jobs.cancel(req.params.id)));
+ app.post('/api/jobs/:id/retry',async(req,res)=>{const b=z.object({key:z.string().max(100)}).strict().parse(req.body),old=store.jobs.job(req.params.id);if(old.status!=='failed')throw new Problem(409,'Only exhausted infrastructure jobs can be retried.');const job=store.jobs.enqueue(old.monitor_id,b.key,'retry',old.id);res.status(201).json(await store.executeJob(job.id));});
  app.get('/api/checks/:id',(req,res)=>res.json(store.check(req.params.id)));
  app.post('/api/monitors/:id/baseline',(req,res)=>{const b=z.object({checkId:z.string().uuid()}).parse(req.body);res.json(store.approveBaseline(req.params.id,b.checkId));});
  app.post('/api/incidents/:id/acknowledge',(req,res)=>{const b=z.object({note:z.string().trim().max(1000).default('')}).parse(req.body||{});res.json(store.acknowledge(req.params.id,b.note));});

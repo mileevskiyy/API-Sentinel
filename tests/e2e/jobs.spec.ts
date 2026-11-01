@@ -1,0 +1,12 @@
+import{test,expect}from'@playwright/test';
+test('queue a fixture check, inspect its worker attempt and export the job history',async({page})=>{
+ test.setTimeout(120000);
+ await page.goto('/',{waitUntil:'domcontentloaded'});await page.getByRole('button',{name:'Try the demo',exact:true}).click();await page.getByRole('button',{name:'New monitor',exact:true}).click();
+ const name=`Queue API ${Date.now()}`;await page.getByLabel('Monitor name',{exact:true}).fill(name);await page.getByLabel('Failures to open incident',{exact:true}).fill('1');await page.getByRole('button',{name:'Create monitor',exact:true}).click();await expect(page.getByRole('heading',{name,exact:true})).toBeVisible();
+ await page.getByLabel('Demo scenario').selectOption('outage');await page.getByRole('button',{name:'Queue check',exact:true}).click();
+ const panel=page.getByRole('region',{name:'Execution jobs'});const card=panel.locator('.job-card').filter({hasText:name});await expect(card.locator('.job-title .badge')).toHaveText('completed',{timeout:20000});await expect(card).toContainText('check failed');await card.getByText('Attempts and request identity',{exact:true}).click();await expect(card).toContainText('Attempt 1 · completed');
+ await card.getByRole('button',{name:'Inspect saved check',exact:true}).click();await expect(page.getByRole('dialog',{name:'Check evidence'})).toContainText('503');await page.getByRole('button',{name:'Close check evidence'}).click();
+ const downloadEvent=page.waitForEvent('download');await panel.getByRole('button',{name:'Export job history',exact:true}).click();const stream=await(await downloadEvent).createReadStream();let text='';for await(const chunk of stream!)text+=chunk;const data=JSON.parse(text);expect(data.jobs[0].status).toBe('completed');expect(data.jobs[0].attempt_count).toBe(1);expect(data.jobs[0].lease_token).toBeUndefined();expect(data.jobs[0].attempts[0].token).toBeUndefined();
+ await page.getByRole('button',{name:'Back to workspace',exact:true}).click();await page.getByRole('button',{name:'Execution jobs',exact:true}).click();const global=page.getByRole('region',{name:'Execution jobs'});await expect(global).toContainText(name);await global.getByLabel('Job state').selectOption('completed');
+ if(!process.env.DEMO_URL){await page.screenshot({path:'docs/execution-jobs.png',fullPage:true});await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'docs/execution-jobs-mobile.png',fullPage:true});}
+});
